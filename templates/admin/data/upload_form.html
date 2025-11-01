@@ -1,0 +1,13 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+  <h1>Cargar mediciones</h1>
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <input type="submit" class="default" value="Subir y procesar">
+  </form>
+  <p style="margin-top:1rem">
+    Formato esperado: CSV/XLSX con cabeceras
+    <code>creat_at,valTem,valCO2,valSon,valHum,ambiente[,tvoc,weight]</code>
+  </p>
+{% endblock %}
