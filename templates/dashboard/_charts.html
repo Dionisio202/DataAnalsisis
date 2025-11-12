@@ -1,0 +1,11 @@
+<div class="panel">
+  <h3>Series Temporales</h3>
+  <div class="charts-grid" id="chartsContainer">
+    {% for code in metrics %}
+      <div class="chart-card">
+        <h4>{{ code }}</h4>
+        <canvas id="line_{{ code }}" class="small"></canvas>
+      </div>
+    {% endfor %}
+  </div>
+</div>

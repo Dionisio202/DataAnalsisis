@@ -1,0 +1,786 @@
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+<script>
+  const initialDays = {{ initial_days|default:30 }};
+  const metrics = {{ metrics|safe|default:"[]" }};
+
+  let pieChart;
+  const lineCharts = {};
+  let currentFilterType = 'preset';
+  let currentAmbiente = 'all';
+
+  async function fetchJSON(url){ 
+    const r = await fetch(url); 
+    return r.json(); 
+  }
+
+  async function loadCards(params){
+    const queryString = new URLSearchParams(params).toString();
+    const json = await fetchJSON(`/dashboard/api/summary/?${queryString}`);
+    for (const c of json.cards){
+      const el = document.querySelector(`.card[data-code="${c.code}"]`);
+      if (!el) continue;
+
+      // valor
+      el.querySelector('.value').innerHTML =
+        (c.last_value != null ? (c.last_value.toFixed(1) + ' ' + c.unit) : '—');
+
+      // badge
+      const badge = el.querySelector('.badge');
+      badge.textContent = c.category.label || 'Sin categoría';
+      badge.style.backgroundColor = c.category.color || '#6b7280';
+
+      // stats
+      const statRows = el.querySelectorAll('.stat-value');
+      if (statRows.length >= 3){
+        statRows[0].textContent = c.avg != null ? (c.avg.toFixed(1) + ' ' + c.unit) : '—';
+        statRows[1].textContent = c.min != null ? (c.min.toFixed(1) + ' ' + c.unit) : '—';
+        statRows[2].textContent = c.max != null ? (c.max.toFixed(1) + ' ' + c.unit) : '—';
+      }
+
+      // timestamp
+      const tsEl = el.querySelector('.timestamp');
+      if (tsEl){
+        if (c.last_at){
+          const d = new Date(c.last_at);
+          tsEl.textContent = d.toLocaleString('es-EC', {
+            year: '2-digit', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false
+          });
+          tsEl.style.display = '';
+        } else {
+          tsEl.textContent = '—';
+        }
+      }
+    }
+  }
+
+  async function loadPie(params){
+    const queryString = new URLSearchParams(params).toString();
+    const json = await fetchJSON(`/dashboard/api/ambiente-pie/?${queryString}`);
+    const ctx = document.getElementById('pie_ambiente').getContext('2d');
+    const data = {
+      labels: json.labels,
+      datasets: [{
+        data: json.data,
+        backgroundColor: [
+          '#10b981', '#f59e0b', '#ef4444'
+        ]
+      }]
+    };
+    const options = { 
+      responsive: true, 
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 15,
+            font: { size: 12 }
+          }
+        }
+      }
+    };
+    if (pieChart) pieChart.destroy();
+    pieChart = new Chart(ctx, { type: 'pie', data, options });
+  }
+
+  async function loadLines(params){
+    const queryString = new URLSearchParams(params).toString();
+    for(const code of metrics){
+      const json = await fetchJSON(`/dashboard/api/series/${code}/?${queryString}`);
+      const id = `line_${code}`;
+      const ctx = document.getElementById(id).getContext('2d');
+      const data = {
+        labels: json.labels,
+        datasets: [{
+          label: `${code} (${json.unit})`,
+          data: json.data,
+          fill: false,
+          tension: 0.3,
+          borderColor: '#3b82f6',
+          backgroundColor: '#3b82f6',
+          borderWidth: 2,
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          pointHitRadius: 15
+        }]
+      };
+      const options = {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            enabled: true,
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6,
+            titleFont: {
+              size: 13,
+              weight: 'bold'
+            },
+            bodyFont: {
+              size: 13
+            },
+            displayColors: true,
+            callbacks: {
+              label: function(context) {
+                let label = context.dataset.label || '';
+                if (label) {
+                  label += ': ';
+                }
+                if (context.parsed.y !== null) {
+                  label += context.parsed.y.toFixed(2);
+                }
+                return label;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: false,
+            grid: {
+              color: '#f3f4f6'
+            }
+          },
+          x: {
+            grid: {
+              display: false
+            }
+          }
+        }
+      };
+      if (lineCharts[id]) lineCharts[id].destroy();
+      lineCharts[id] = new Chart(ctx, { type: 'line', data, options });
+    }
+  }
+
+  async function reloadAll(params){
+    await Promise.all([
+      loadCards(params),
+      loadPie(params),
+      loadLines(params)
+    ]);
+  }
+
+  // Inicializar filtros
+  const filterType = document.getElementById('filterType');
+  const presetFilter = document.getElementById('presetFilter');
+  const customFilter = document.getElementById('customFilter');
+  const rangeSelect = document.getElementById('rangeSelect');
+  const ambienteSelect = document.getElementById('ambienteSelect');
+  const startDate = document.getElementById('startDate');
+  const endDate = document.getElementById('endDate');
+  const applyBtn = document.getElementById('applyCustomRange');
+
+  // Establecer fecha máxima como hoy
+  const today = new Date().toISOString().split('T')[0];
+  endDate.value = today;
+  endDate.max = today;
+  
+  // Establecer fecha de inicio como hace 30 días
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  startDate.value = thirtyDaysAgo.toISOString().split('T')[0];
+  startDate.max = today;
+
+  // Cambiar tipo de filtro
+  filterType.addEventListener('change', (e) => {
+    currentFilterType = e.target.value;
+    if (currentFilterType === 'preset') {
+      presetFilter.classList.remove('hidden');
+      customFilter.classList.add('hidden');
+      reloadAll({ days: rangeSelect.value, ambiente: currentAmbiente });
+    } else {
+      presetFilter.classList.add('hidden');
+      customFilter.classList.remove('hidden');
+    }
+  });
+
+  // Filtro por período predefinido
+  rangeSelect.value = String(initialDays);
+  rangeSelect.addEventListener('change', (e) => {
+    if (currentFilterType === 'preset') {
+      reloadAll({ days: e.target.value, ambiente: currentAmbiente });
+    }
+  });
+
+  // Filtro por ambiente
+  ambienteSelect.addEventListener('change', (e) => {
+    currentAmbiente = e.target.value;
+    if (currentFilterType === 'preset') {
+      reloadAll({ days: rangeSelect.value, ambiente: currentAmbiente });
+    } else {
+      const start = startDate.value;
+      const end = endDate.value;
+      if (start && end) {
+        reloadAll({ start_date: start, end_date: end, ambiente: currentAmbiente });
+      }
+    }
+  });
+
+  // Aplicar rango personalizado
+  applyBtn.addEventListener('click', () => {
+    const start = startDate.value;
+    const end = endDate.value;
+    
+    if (!start || !end) {
+      alert('Por favor selecciona ambas fechas');
+      return;
+    }
+    
+    if (start > end) {
+      alert('La fecha de inicio debe ser anterior a la fecha final');
+      return;
+    }
+    
+    reloadAll({ start_date: start, end_date: end, ambiente: currentAmbiente });
+  });
+
+  // Validar que start_date no sea mayor que end_date
+  startDate.addEventListener('change', () => {
+    if (startDate.value > endDate.value) {
+      endDate.value = startDate.value;
+    }
+  });
+
+  endDate.addEventListener('change', () => {
+    if (endDate.value < startDate.value) {
+      startDate.value = endDate.value;
+    }
+  });
+
+  // Variables globales para los charts avanzados
+  const advancedCharts = {
+    dailyCategories: null,
+    peakHours: null,
+    dayType: null,
+    weeklyPeak: null,
+    correlation: null,
+    crossPeaks: null,
+    regressionCoef: null
+  };
+
+  // 1. Categorías diarias
+  async function loadDailyCategories(metric, params) {
+    const qs = new URLSearchParams({...params, metric});
+    const json = await fetchJSON(`/dashboard/api/daily-categories/?${qs}`);
+    
+    const ctx = document.getElementById('dailyCategoriesChart').getContext('2d');
+    const labels = json.rows.map(r => r.date);
+    const data = {
+      labels,
+      datasets: [
+        {
+          label: 'Óptimo',
+          data: json.rows.map(r => r.optimos),
+          backgroundColor: '#10B981',
+        },
+        {
+          label: 'Aceptable',
+          data: json.rows.map(r => r.aceptables),
+          backgroundColor: '#F59E0B',
+        },
+        {
+          label: 'Crítico',
+          data: json.rows.map(r => r.criticos),
+          backgroundColor: '#EF4444',
+        }
+      ]
+    };
+    
+    if (advancedCharts.dailyCategories) advancedCharts.dailyCategories.destroy();
+    advancedCharts.dailyCategories = new Chart(ctx, {
+      type: 'bar',
+      data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, beginAtZero: true }
+        },
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6
+          }
+        }
+      }
+    });
+    
+    document.getElementById('dailySummary').textContent = 
+      `${json.summary.days_ok} de ${json.summary.total_days} días con mayoría óptima`;
+  }
+
+  // 2. Horas pico
+  async function loadPeakHours(metric, params) {
+    const qs = new URLSearchParams({...params, metric, top: 10});
+    const json = await fetchJSON(`/dashboard/api/peak-hours/?${qs}`);
+    
+    const ctx = document.getElementById('peakHoursChart').getContext('2d');
+    const sorted = json.rows.sort((a, b) => (b.avg || 0) - (a.avg || 0)).slice(0, 10);
+    
+    const data = {
+      labels: sorted.map(r => `${r.hour}:00h`),
+      datasets: [{
+        label: 'Promedio',
+        data: sorted.map(r => r.avg),
+        backgroundColor: '#3B82F6',
+        hoverBackgroundColor: '#2563eb',
+        borderRadius: 4
+      }]
+    };
+    
+    if (advancedCharts.peakHours) advancedCharts.peakHours.destroy();
+    advancedCharts.peakHours = new Chart(ctx, {
+      type: 'bar',
+      data,
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+          padding: {
+            top: 5,
+            bottom: 5,
+            left: 0,
+            right: 10
+          }
+        },
+        interaction: {
+          mode: 'dataset',
+          intersect: true,
+          includeInvisible: false
+        },
+        onHover: (event, activeElements, chart) => {
+          if (activeElements.length > 0) {
+            event.native.target.style.cursor = 'pointer';
+          } else {
+            event.native.target.style.cursor = 'default';
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            position: 'average',
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6,
+            caretSize: 6,
+            yAlign: 'center',
+            callbacks: {
+              title: function(context) {
+                return context[0].label;
+              },
+              label: function(context) {
+                return `Promedio: ${context.parsed.x.toFixed(1)}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+                      min: json.scale?.min, max: json.scale?.max, grace: '5%',
+
+            beginAtZero: true,
+            grid: {
+              color: '#f3f4f6'
+            }
+          },
+          y: {
+            grid: {
+              display: false
+            },
+            ticks: {
+              autoSkip: false
+            }
+          }
+        }
+      }
+    });
+    
+    const top3 = json.top_hours.slice(0, 3);
+    document.getElementById('topHoursInfo').textContent = 
+      `Top 3 horas: ${top3.map(h => `${h.hour}h (${h.avg.toFixed(1)})`).join(', ')}`;
+  }
+
+  // 3. Comparación por tipo de día
+ async function loadDayTypeComparison(metric, params) {
+  const types = ['laborable', 'weekend', 'domingo'];
+  const labelMap = { laborable: 'Laborable', weekend: 'Fin de semana', domingo: 'Domingo' };
+  const colorMap = { laborable: '#3B82F6', weekend: '#10B981', domingo: '#F59E0B' };
+
+  // Pedimos los tres tipos en paralelo (cada uno trae su "scale")
+  const jsons = await Promise.all(types.map(daytype => {
+    const qs = new URLSearchParams({ ...params, metric, daytype });
+    return fetchJSON(`/dashboard/api/by-daytype/?${qs}`);
+  }));
+
+  // Construimos datasets con el promedio de cada tipo (si hay datos)
+  const datasets = [];
+  for (let i = 0; i < types.length; i++) {
+    const daytype = types[i];
+    const json = jsons[i];
+    const avgs = (json.rows || []).map(r => r.avg).filter(v => v != null);
+    if (!avgs.length) continue;
+
+    const avg = avgs.reduce((a, b) => a + b, 0) / avgs.length;
+    datasets.push({
+      label: labelMap[daytype],
+      data: [avg],
+      backgroundColor: colorMap[daytype],
+    });
+  }
+
+  // Unificamos Y usando las escalas devueltas por los 3 endpoints
+  const yMins = jsons.map(j => j.scale?.min).filter(v => typeof v === 'number');
+  const yMaxs = jsons.map(j => j.scale?.max).filter(v => typeof v === 'number');
+  const yMin = yMins.length ? Math.min(...yMins) : undefined;
+  const yMax = yMaxs.length ? Math.max(...yMaxs) : undefined;
+
+  const ctx = document.getElementById('dayTypeChart').getContext('2d');
+  if (advancedCharts.dayType) advancedCharts.dayType.destroy();
+
+  advancedCharts.dayType = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Promedio por tipo de día'],
+      datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: {
+          min: yMin,
+          max: yMax,
+          grace: '5%',
+          grid: { color: '#f3f4f6' }
+        },
+        x: { grid: { display: false } }
+      },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          padding: 12,
+          cornerRadius: 6
+        }
+      }
+    }
+  });
+}
+
+
+  // 4. Pico semanal
+  async function loadWeeklyPeak(metric, params) {
+    const qs = new URLSearchParams({...params, metric});
+    const json = await fetchJSON(`/dashboard/api/weekly-peak-hour/?${qs}`);
+    
+    const ctx = document.getElementById('weeklyPeakChart').getContext('2d');
+    const data = {
+      labels: json.rows.map(r => `${r.year}-S${String(r.week).padStart(2,'0')}`),
+      datasets: [{
+        label: 'Hora pico',
+        data: json.rows.map(r => r.hour),
+        borderColor: '#8B5CF6',
+        backgroundColor: '#8B5CF6',
+        tension: 0.3,
+        fill: false,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        pointHitRadius: 15
+      }]
+    };
+    
+    if (advancedCharts.weeklyPeak) advancedCharts.weeklyPeak.destroy();
+    advancedCharts.weeklyPeak = new Chart(ctx, {
+      type: 'line',
+      data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        scales: {
+          y: { 
+            min: 0, 
+            max: 23,
+            ticks: { stepSize: 1 }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6
+          }
+        }
+      }
+    });
+  }
+
+  // 5. Correlación
+  async function loadCorrelation(varX, varY, params) {
+    const qs = new URLSearchParams({...params, x: varX, y: varY});
+    const json = await fetchJSON(`/dashboard/api/compare/?${qs}`);
+    
+    const ctx = document.getElementById('correlationChart').getContext('2d');
+    const data = {
+      datasets: [{
+        label: `${varX} vs ${varY}`,
+        data: json.series.map(s => ({ x: s[varX], y: s[varY] })),
+        backgroundColor: 'rgba(59, 130, 246, 0.5)',
+        borderColor: '#3B82F6',
+        pointRadius: 5,
+        pointHoverRadius: 8,
+        pointHitRadius: 15
+      }]
+    };
+    
+    if (advancedCharts.correlation) advancedCharts.correlation.destroy();
+    advancedCharts.correlation = new Chart(ctx, {
+      type: 'scatter',
+      data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'point',
+          intersect: true
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6,
+            callbacks: {
+              label: function(context) {
+                return `${varX}: ${context.parsed.x.toFixed(1)}, ${varY}: ${context.parsed.y.toFixed(1)}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { title: { display: true, text: varX } },
+          y: { title: { display: true, text: varY } }
+        }
+      }
+    });
+    
+    const corr = json.pearson !== null ? json.pearson.toFixed(3) : 'N/A';
+    document.getElementById('correlationInfo').textContent = 
+      `Correlación de Pearson: ${corr}`;
+  }
+
+  // 6. Picos cruzados
+  async function loadCrossPeaks(varA, varB, params) {
+    const qs = new URLSearchParams({...params, a: varA, b: varB, window_min: 30});
+    const json = await fetchJSON(`/dashboard/api/cross-peaks/?${qs}`);
+    
+    const ctx = document.getElementById('crossPeaksChart').getContext('2d');
+    const data = {
+      labels: json.rows.map((r, i) => `Pico ${i + 1}`),
+      datasets: [{
+        label: `${varB} promedio`,
+        data: json.rows.map(r => r.avg_b_window),
+        backgroundColor: '#EC4899',
+        borderColor: '#EC4899',
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        pointHitRadius: 15
+      }]
+    };
+    
+    if (advancedCharts.crossPeaks) advancedCharts.crossPeaks.destroy();
+    advancedCharts.crossPeaks = new Chart(ctx, {
+      type: 'line',
+      data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6
+          }
+        }
+      }
+    });
+    
+    const avg = json.rows.length > 0 
+      ? (json.rows.reduce((sum, r) => sum + (r.avg_b_window || 0), 0) / json.rows.length).toFixed(1)
+      : 'N/A';
+    document.getElementById('crossPeaksInfo').textContent = 
+      `${json.rows.length} picos analizados. Promedio ${varB}: ${avg}`;
+  }
+
+  // 7. Regresión
+  async function loadRegression(target, freq, params) {
+    const features = metrics.filter(m => m !== target).join(',');
+    const qs = new URLSearchParams({...params, target, features, freq});
+    const json = await fetchJSON(`/dashboard/api/regression/?${qs}`);
+    
+    const ctx = document.getElementById('regressionCoefChart').getContext('2d');
+    const coefs = json.coefficients;
+    const labels = Object.keys(coefs).filter(k => k !== 'intercept');
+    const values = labels.map(k => coefs[k]);
+    
+    const data = {
+      labels,
+      datasets: [{
+        label: 'Coeficiente',
+        data: values,
+        backgroundColor: values.map(v => v >= 0 ? '#10B981' : '#EF4444'),
+      }]
+    };
+    
+    if (advancedCharts.regressionCoef) advancedCharts.regressionCoef.destroy();
+    advancedCharts.regressionCoef = new Chart(ctx, {
+      type: 'bar',
+      data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            padding: 12,
+            cornerRadius: 6
+          }
+        }
+      }
+    });
+    
+    document.getElementById('r2Value').textContent = json.r2.toFixed(3);
+    document.getElementById('nSamples').textContent = json.n;
+  }
+
+  // Cargar todos los charts avanzados
+  async function reloadAdvancedCharts(params) {
+    const metric = document.getElementById('advancedMetric').value;
+    
+    await Promise.all([
+      loadDailyCategories(metric, params),
+      loadPeakHours(metric, params),
+      loadDayTypeComparison(metric, params),
+      loadWeeklyPeak(metric, params)
+    ]);
+  }
+
+  // Event listeners
+  document.getElementById('advancedMetric').addEventListener('change', () => {
+    const params = currentFilterType === 'preset' 
+      ? { days: rangeSelect.value, ambiente: currentAmbiente }
+      : { start_date: startDate.value, end_date: endDate.value, ambiente: currentAmbiente };
+    reloadAdvancedCharts(params);
+  });
+
+  document.getElementById('btnCompare').addEventListener('click', () => {
+    const varX = document.getElementById('varX').value;
+    const varY = document.getElementById('varY').value;
+    
+    if (varX === varY) {
+      alert('Selecciona variables diferentes');
+      return;
+    }
+    
+    const params = currentFilterType === 'preset' 
+      ? { days: rangeSelect.value, ambiente: currentAmbiente }
+      : { start_date: startDate.value, end_date: endDate.value, ambiente: currentAmbiente };
+    
+    Promise.all([
+      loadCorrelation(varX, varY, params),
+      loadCrossPeaks(varX, varY, params)
+    ]);
+  });
+
+  document.getElementById('btnRegression').addEventListener('click', () => {
+    const target = document.getElementById('targetVar').value;
+    const freq = document.getElementById('regressionFreq').value;
+    
+    const params = currentFilterType === 'preset' 
+      ? { days: rangeSelect.value, ambiente: currentAmbiente }
+      : { start_date: startDate.value, end_date: endDate.value, ambiente: currentAmbiente };
+    
+    loadRegression(target, freq, params);
+  });
+
+  // Cargar correlación y regresión con los selects actuales
+  async function reloadCorrelationAndRegression(params) {
+    const xEl = document.getElementById('varX');
+    const yEl = document.getElementById('varY');
+    const targetEl = document.getElementById('targetVar');
+    const freqEl = document.getElementById('regressionFreq');
+    if (!(xEl && yEl && targetEl && freqEl)) return;
+
+    const varX = xEl.value;
+    const varY = yEl.value;
+    if (varX !== varY) {
+      await Promise.all([
+        loadCorrelation(varX, varY, params),
+        loadCrossPeaks(varX, varY, params)
+      ]);
+    }
+    await loadRegression(targetEl.value, freqEl.value, params);
+  }
+
+  // Redefinir reloadAll para incluir TODO
+  const originalReloadAll = reloadAll;
+  reloadAll = async function(params) {
+    await originalReloadAll(params);        // cards, pie, líneas
+    await reloadAdvancedCharts(params);     // avanzados (categorías, picos, etc.)
+    await reloadCorrelationAndRegression(params); // correlación + regresión
+  };
+
+  // Carga inicial (después de redefinir reloadAll)
+  const initialParams = { days: initialDays, ambiente: currentAmbiente };
+  reloadAll(initialParams);
+
+</script>

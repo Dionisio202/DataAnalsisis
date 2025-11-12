@@ -1,0 +1,46 @@
+<div class="dashboard-header">
+  <div class="filters-container">
+    <div class="filter-group">
+      <label for="filterType">Filtrar por:</label>
+      <select id="filterType">
+        <option value="preset">Período predefinido</option>
+        <option value="custom">Rango personalizado</option>
+      </select>
+    </div>
+
+    <div class="filter-group" id="presetFilter">
+      <label for="rangeSelect">Período:</label>
+      <select id="rangeSelect">
+        <option value="7">Últimos 7 días</option>
+        <option value="30" selected>Últimos 30 días</option>
+        <option value="90">Últimos 90 días</option>
+        <option value="180">Últimos 180 días</option>
+        <option value="365">Último año</option>
+        <option value="all">Todo el período</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="ambienteSelect">Ambiente:</label>
+      <select id="ambienteSelect">
+        {% for amb in ambientes %}
+          <option value="{{ amb.value }}">{{ amb.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="date-range-group hidden" id="customFilter">
+      <div class="date-inputs">
+        <div class="date-field">
+          <label for="startDate">Fecha inicio:</label>
+          <input type="date" id="startDate">
+        </div>
+        <div class="date-field">
+          <label for="endDate">Fecha fin:</label>
+          <input type="date" id="endDate">
+        </div>
+      </div>
+      <button class="btn-apply" id="applyCustomRange">Aplicar Filtro</button>
+    </div>
+  </div>
+</div>

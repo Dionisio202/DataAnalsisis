@@ -1,0 +1,41 @@
+<div class="panel">
+  <h3>Distribución por Ambiente</h3>
+  <div class="pie-container">
+    <canvas id="pie_ambiente"></canvas>
+  </div>
+  <p class="pie-note">
+    Datos calculados para el período seleccionado
+  </p>
+
+  <h3 style="margin-top: 2rem;">Valores de Referencia</h3>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Código</th>
+          <th>Parámetro</th>
+          <th>Unidad</th>
+          <th>Rangos</th>
+          <th>Uso</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in specs %}
+          <tr>
+            <td><strong>{{ s.code }}</strong></td>
+            <td>{{ s.measured_param }}</td>
+            <td>{{ s.unit }}</td>
+            <td>{{ s.range_text }}</td>
+            <td>{{ s.use_in_reports }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" style="text-align: center; padding: 2rem; color: #9ca3af;">
+              Sin especificaciones. Ejecuta el comando de seed.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

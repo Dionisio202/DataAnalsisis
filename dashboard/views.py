@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from django.db.models import Avg, Max, Min, Count, Sum, Case, When, IntegerField, Q
-from django.db.models.functions import TruncHour, TruncDay, TruncDate, ExtractHour, ExtractIsoWeekDay, ExtractWeek
+from django.db.models.functions import TruncHour, TruncDay, TruncDate, ExtractHour, ExtractIsoWeekDay, ExtractWeek , ExtractIsoYear
 import math
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -321,6 +321,25 @@ def _thresholds(metric_code: str):
         low_max = th.get("low_max", 800)
         mid_max = th.get("mid_max", 1200)
         return low_max, mid_max, None
+def _compute_scale(values, pad_pct=0.08, force_zero=False):
+    """Calcula min/max 'apretados' para el eje a partir de la data."""
+    vals = [float(v) for v in values if v is not None]
+    if not vals:
+        return None
+    vmin, vmax = min(vals), max(vals)
+
+    if force_zero:
+        vmin = 0.0
+
+    if vmin == vmax:
+        # abre un margen cuando todo es igual
+        delta = (abs(vmin) * 0.1) or 1.0
+        vmin -= delta
+        vmax += delta
+
+    pad = (vmax - vmin) * pad_pct
+    return {"min": round(vmin - pad, 4), "max": round(vmax + pad, 4)}
+
 
 # ---------- 1) Días: óptimos/aceptables/críticos + día exacto y tipo de jornada ----------
 def api_daily_categories(request):
@@ -332,6 +351,7 @@ def api_daily_categories(request):
       - summary: total_days, days_ok (mayoría óptimo por día)
       - top_critical_days: top 10 días con más críticos
     Params: metric=CO2|RUIDO|TEMP|HUM|TVOC + (days|start_date/end_date) + ambiente
+            normalize=1 para devolver porcentajes 0..100 (barras 100% apiladas)
     """
     metric = (request.GET.get("metric") or "CO2").upper()
     field, _ = _metric_field(metric)
@@ -368,28 +388,51 @@ def api_daily_categories(request):
         )
         .order_by('d'))
 
+    normalize = (request.GET.get("normalize") == "1")
+
     rows, days_ok = [], 0
+    totals_for_scale = []
+
     for x in daily:
-        majority_opt = x['optimos'] > (x['total'] / 2.0)
-        if majority_opt: days_ok += 1
+        total = x['total'] or 1
+        o, a, c = x['optimos'], x['aceptables'], x['criticos']
+        majority_opt = o > (total / 2.0)
+        if majority_opt:
+            days_ok += 1
+
+        if normalize:
+            o = 100.0 * o / total
+            a = 100.0 * a / total
+            c = 100.0 * c / total
+        else:
+            totals_for_scale.append(o + a + c)
+
         rows.append({
             "date": x['d'].isoformat(),
             "weekday": int(x['wd']),                 # 1..7
             "is_weekend": int(x['wd']) in (6, 7),
-            "optimos": x['optimos'],
-            "aceptables": x['aceptables'],
-            "criticos": x['criticos'],
+            "optimos": o,
+            "aceptables": a,
+            "criticos": c,
             "total": x['total'],
         })
 
     top_crit = sorted(rows, key=lambda r: r['criticos'], reverse=True)[:10]
 
-    return JsonResponse({
+    payload = {
         "metric": metric,
         "rows": rows,
         "summary": {"total_days": len(rows), "days_ok": days_ok},
         "top_critical_days": top_crit,
-    })
+        "normalized": normalize,
+    }
+
+    # Si no normalizas, devolvemos escala apretada para el eje de totales apilados
+    if not normalize:
+        payload["scale"] = _compute_scale(totals_for_scale, pad_pct=0.05, force_zero=True)
+
+    return JsonResponse(payload)
+
 
 # ---------- 2) Agregados por tipo de día (laborable/fin de semana/domingo) o weekday específico ----------
 def api_by_daytype(request):
@@ -439,7 +482,9 @@ def api_by_daytype(request):
         "avg": x['avg'], "min": x['min'], "max": x['max'], "n": x['n']
     } for x in per_day]
 
-    return JsonResponse({"metric": metric, "unit": unit, "rows": rows})
+    scale = _compute_scale([r["avg"] for r in rows], pad_pct=0.08, force_zero=False)
+
+    return JsonResponse({"metric": metric, "unit": unit, "rows": rows, "scale": scale})
 
 # ---------- 3) Horas pico (global) ----------
 def api_peak_hours(request):
@@ -467,12 +512,16 @@ def api_peak_hours(request):
 
     rows = [{"hour": int(x['h']), "avg": x['avg'], "max": x['max'], "n": x['n']} for x in hours]
     top_hours = sorted(rows, key=lambda r: (r['avg'] if r['avg'] is not None else -1), reverse=True)[:top]
-    return JsonResponse({"metric": metric, "rows": rows, "top_hours": top_hours})
+
+    scale = _compute_scale([r["avg"] for r in rows], pad_pct=0.10, force_zero=False)
+
+    return JsonResponse({"metric": metric, "rows": rows, "top_hours": top_hours, "scale": scale})
+
 
 # ---------- 4) Hora pico por semana ----------
 def api_weekly_peak_hour(request):
     """
-    Para cada semana ISO, devuelve la hora con mayor promedio.
+    Para cada (año ISO, semana ISO) devuelve la hora con mayor promedio.
     Params: metric=... + rango/ambiente
     """
     metric = (request.GET.get("metric") or "CO2").upper()
@@ -486,18 +535,29 @@ def api_weekly_peak_hour(request):
     qs = _apply_filters(
         Measurement.objects.exclude(**{f"{field}__isnull": True}),
         since, until, ambiente
-    ).annotate(w=ExtractWeek('created_at'), h=ExtractHour('created_at'))
+    ).annotate(
+        y=ExtractIsoYear('created_at'),
+        w=ExtractWeek('created_at'),
+        h=ExtractHour('created_at'),
+    )
 
-    by_wh = (qs.values('w','h').annotate(avg=Avg(field)).order_by('w','h'))
+    by_ywh = qs.values('y', 'w', 'h').annotate(avg=Avg(field)).order_by('y', 'w', 'h')
 
     best = {}
-    for x in by_wh:
-        w = int(x['w'])
-        cand = best.get(w)
+    for x in by_ywh:
+        key = (int(x['y']), int(x['w']))
+        cand = best.get(key)
         if not cand or (x['avg'] or -math.inf) > (cand['avg'] or -math.inf):
-            best[w] = {"week": w, "hour": int(x['h']), "avg": x['avg']}
+            best[key] = {
+                "year": int(x['y']),
+                "week": int(x['w']),
+                "hour": int(x['h']),
+                "avg": x['avg'],
+            }
 
-    return JsonResponse({"metric": metric, "rows": list(best.values())})
+    rows = [best[k] for k in sorted(best.keys())]
+    return JsonResponse({"metric": metric, "rows": rows})
+
 
 # ---------- 5) Comparación de variables + correlación (Pearson) ----------
 def api_compare_variables(request):

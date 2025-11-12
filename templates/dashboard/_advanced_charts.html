@@ -1,0 +1,146 @@
+<div class="panel">
+  <h3>Análisis Avanzado</h3>
+  
+  <!-- Controles para selección de métrica -->
+  <div class="advanced-controls">
+    <div class="filter-group">
+      <label for="advancedMetric">Métrica:</label>
+      <select id="advancedMetric">
+        {% for code in metrics %}
+          <option value="{{ code }}">{{ code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <!-- Grid de gráficos avanzados -->
+  <div class="advanced-grid">
+    
+    <!-- 1. Categorías diarias (Stacked Bar) -->
+    <div class="chart-card">
+      <h4>Distribución Diaria: Óptimo/Aceptable/Crítico</h4>
+      <canvas id="dailyCategoriesChart" class="small"></canvas>
+      <div class="chart-info">
+        <span id="dailySummary">—</span>
+      </div>
+    </div>
+
+    <!-- 2. Horas pico (Bar horizontal) -->
+    <div class="chart-card">
+      <h4>Horas Pico del Día</h4>
+      <canvas id="peakHoursChart" class="small"></canvas>
+      <div class="chart-info">
+        <span id="topHoursInfo">—</span>
+      </div>
+    </div>
+
+    <!-- 3. Comparación por tipo de día (Box plot simulado) -->
+    <div class="chart-card">
+      <h4>Comparación: Laborable vs Fin de Semana</h4>
+      <canvas id="dayTypeChart" class="small"></canvas>
+    </div>
+
+    <!-- 4. Pico semanal por hora (Line) -->
+    <div class="chart-card">
+      <h4>Hora Pico por Semana</h4>
+      <canvas id="weeklyPeakChart" class="small"></canvas>
+    </div>
+
+  </div>
+</div>
+
+<!-- Panel de Correlaciones -->
+<div class="panel">
+  <h3>Análisis de Correlaciones</h3>
+  
+<div class="correlation-controls">
+    <div class="filter-group">
+      <label for="varX">Variable X:</label>
+      <select id="varX">
+        {% for code in metrics %}
+          <option value="{{ code }}" {% if code == 'CO2' %}selected{% endif %}>{{ code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="filter-group">
+      <label for="varY">Variable Y:</label>
+      <select id="varY">
+        {% for code in metrics %}
+          <option value="{{ code }}" {% if code == 'TEMP' %}selected{% endif %}>{{ code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="filter-group">
+      <label style="opacity: 0;">Acción</label>
+      <button class="btn-apply" id="btnCompare">Comparar</button>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    
+    <!-- Scatter plot de correlación -->
+    <div class="chart-card">
+      <h4>Correlación entre Variables</h4>
+      <canvas id="correlationChart" class="small"></canvas>
+      <div class="chart-info">
+        <span id="correlationInfo">—</span>
+      </div>
+    </div>
+
+    <!-- Análisis de picos cruzados -->
+    <div class="chart-card">
+      <h4>Impacto en Picos</h4>
+      <canvas id="crossPeaksChart" class="small"></canvas>
+      <div class="chart-info">
+        <span id="crossPeaksInfo">—</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Panel de Regresión -->
+<div class="panel">
+  <h3>Modelo de Regresión Multivariante</h3>
+  
+  <div class="regression-controls">
+    <div class="filter-group">
+      <label for="targetVar">Variable objetivo:</label>
+      <select id="targetVar">
+        {% for code in metrics %}
+          <option value="{{ code }}" {% if code == 'CO2' %}selected{% endif %}>{{ code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="filter-group">
+      <label for="regressionFreq">Frecuencia:</label>
+      <select id="regressionFreq">
+        <option value="hour">Por hora</option>
+        <option value="day" selected>Por día</option>
+      </select>
+    </div>
+    
+    <button class="btn-apply" id="btnRegression">Calcular</button>
+  </div>
+
+  <div class="regression-results">
+    <div class="chart-card">
+      <h4>Coeficientes del Modelo</h4>
+      <canvas id="regressionCoefChart" class="small"></canvas>
+    </div>
+    
+    <div class="regression-stats">
+      <div class="stat-card">
+        <h5>R² (Ajuste del modelo)</h5>
+        <div class="stat-value-large" id="r2Value">—</div>
+      </div>
+      <div class="stat-card">
+        <h5>Muestras utilizadas</h5>
+        <div class="stat-value-large" id="nSamples">—</div>
+      </div>
+    </div>
+  </div>
+</div>
